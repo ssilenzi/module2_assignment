@@ -10,7 +10,8 @@ RADIUS = 0.195 / 2
 Q_START = np.array([-1.0, 2.0, pi])
 Q_SENSOR = np.array([0.08, 0, 0])
 LIDAR_RANGE = pi
-DIST_FROM_WALL = 0.5 - Q_SENSOR[0]
+MIN_DIST = 0.5
+MAX_DIST = 0.6
 Q_INTERM = np.array([-1.0, 2.0, 0])
 K = np.array([0.25, 0.25, 0.5])
 FORWARD_SPEED = 0.1
@@ -18,7 +19,7 @@ TOL = 0.01
 MAX_TIME = 10
 
 class Controller:
-    def __init__(self, robot, timestep, interaxis, radius, max_speed, q_start, q_sensor, range, k, min_dist, tol, max_time):
+    def __init__(self, robot, timestep, interaxis, radius, max_speed, q_start, q_sensor, range, k, min_dist, max_dist, tol, max_time):
         self.robot = robot
         self.timestep = timestep
         self.interaxis = interaxis
@@ -32,6 +33,7 @@ class Controller:
         self.range = range
         self.k = k
         self.min_dist = min_dist
+        self.max_dist = max_dist
         self.tol = tol
         self.max_time = max_time
         self.lidar = robot.getDevice('Sick LMS 291')
@@ -113,9 +115,7 @@ class Controller:
         self.x_robot_goal = self.q_robot_goal[0]
         self.y_robot_goal = self.q_robot_goal[1]
         self.theta_robot_goal = self.q_robot_goal[2]
-        # print("Current time: %g s" % (self.current_time))
-        # print("Current state robot: x = %g m; y = %g m; theta = %g rad" % (self.x_robot, self.y_robot, self.theta_robot))
-        # print("Current state robot_goal: x = %g m; y = %g m; theta = %g rad" % (self.x_robot_goal, self.y_robot_goal, self.theta_robot_goal))
+        self.scan = self.lidar.getRangeImage()
         self.near_obstacle = self.min_distance_from_obstacle()
 
     def move_robot(self, linear_velocity, angular_velocity):
@@ -132,8 +132,6 @@ class Controller:
         self.right_wheel_velocity = wheel_velocities[1]
         self.leftMotor.setVelocity(self.left_wheel_velocity)
         self.rightMotor.setVelocity(self.right_wheel_velocity)
-        # print("Set robot velocities to: %g m/s linear, %g rad/s angular" %
-        #       (self.linear_velocity, self.angular_velocity))
 
     def set_goal_q(self, q_goal):
         self.q_goal = q_goal
@@ -174,7 +172,7 @@ class Controller:
             return False
 
     def min_distance_from_obstacle(self):
-        scan = np.array(self.lidar.getRangeImage())
+        scan = np.array(self.scan)
         angles = np.linspace(self.range / 2, - self.range / 2, scan.shape[0])
         index = np.argmin(scan)
         min_angle = angles[index]
@@ -182,16 +180,19 @@ class Controller:
         return (min_angle, min_distance)
 
     def plan_to_wall(self):
-        distance = self.near_obstacle[1] - self.min_dist
+        distance = self.near_obstacle[1] - (self.min_dist - self.q_sensor[0])
         angle = self.near_obstacle[0]
         q_wall_sensor = np.array([distance * cos(angle), distance * sin(angle), angle])
         q_wall_robot = self.transform_pos_direct(self.q_sensor, q_wall_sensor)
         q_wall = self.transform_pos_direct(self.q_robot, q_wall_robot)
         return q_wall
 
-    def plan_along_wall(self):
+    def plan_along_wall(self, state):
         q_wall = self.plan_to_wall()
-        return (q_wall[1], q_wall[2] - pi / 2)
+        if state == 0:
+            return (q_wall[1], q_wall[2] - pi / 2)
+        else:
+            return (q_wall[1], q_wall[2] + pi / 4)
 
     def control_to_goal_q(self, q_goal):
         self.set_goal_q(q_goal)
@@ -210,21 +211,28 @@ class Controller:
         q_goal = self.plan_to_wall()
         self.control_to_goal_q(q_goal)
 
-    def control_along_wall(self, forward_speed):
-        q_track = self.plan_along_wall()
+    def control_along_wall(self, state, forward_speed):
+        q_track = self.plan_along_wall(state)
         self.set_goal_track(q_track[0], q_track[1])
         while self.robot.step(int(1000 * self.timestep)) != -1:
             self.state_update()
             angular_velocity = - self.k[1] * self.y_robot_goal - self.k[2] * self.theta_robot_goal
             self.move_robot(forward_speed, angular_velocity)
+            if self.near_obstacle[1] < 0.2:
+                state = 0
+                break
+            elif self.near_obstacle[1] > self.max_dist:
+                state = 1
+                break
         print("Current time: %g s" % (self.current_time))
         print("Current state: x = %g m; y = %g m; theta = %g rad" %
-                (self.x_robot, self.y_robot, self.theta_robot))
+            (self.x_robot, self.y_robot, self.theta_robot))
 
 def main():
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
-    ctrl = Controller(robot, timestep / 1000, INTERAXIS, RADIUS, MAX_SPEED, Q_START, Q_SENSOR, LIDAR_RANGE, K, DIST_FROM_WALL, TOL, MAX_TIME)
+    ctrl = Controller(robot, timestep / 1000, INTERAXIS, RADIUS, MAX_SPEED, Q_START, Q_SENSOR, LIDAR_RANGE, K, MIN_DIST, MAX_DIST, TOL, \
+        MAX_TIME)
     print("Current time: %g s" % (ctrl.current_time))
     print("Current state: x = %g m; y = %g m; theta = %g rad" %
         (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
@@ -234,9 +242,11 @@ def main():
 
     ctrl.control_to_wall()
 
-    ctrl.control_along_wall(FORWARD_SPEED)
-    
-    ctrl.move_robot(0.0, 0.0)
+    print("Planning along the wall")
+    state = 0
+    while True:
+        ctrl.control_along_wall(state, FORWARD_SPEED)
+        print("Replanning...")
 
 if __name__ == "__main__":
     main()
