@@ -8,13 +8,15 @@ MAX_SPEED = 12.3
 INTERAXIS = 0.325
 RADIUS = 0.195 / 2
 Q_START = np.array([-1.0, 2.0, pi])
+Q_SENSOR = np.array([0.08, 0, 0])
+LIDAR_RANGE = pi
+DIST_FROM_WALL = 0.5 - Q_SENSOR[0]
 Q_INTERM = np.array([-1.0, 2.0, 0])
 K = np.array([0.25, 0.25, 0.5])
 TOL = 0.01
 
-
 class Controller:
-    def __init__(self, robot, timestep, interaxis, radius, max_speed, q_start, k, tol):
+    def __init__(self, robot, timestep, interaxis, radius, max_speed, q_start, q_sensor, range, k, min_dist, tol):
         self.robot = robot
         self.timestep = timestep
         self.interaxis = interaxis
@@ -24,7 +26,10 @@ class Controller:
         self.y_robot = q_start[1]
         self.theta_robot = q_start[2]
         self.q_robot = np.array([self.x_robot, self.y_robot, self.theta_robot])
+        self.q_sensor = q_sensor
+        self.range = range
         self.k = k
+        self.min_dist = min_dist
         self.tol = tol
         self.lidar = robot.getDevice('Sick LMS 291')
         self.lidar.enable(60)
@@ -46,6 +51,7 @@ class Controller:
         self.curvature_radius = 0
         self.x_velocity_centre = 0
         self.y_velocity_centre = 0
+        self.near_obstacle = (0, 0)
         self.transform_velocities = np.array([[1/self.radius, -self.interaxis/(2*self.radius)],
                                               [1/self.radius, self.interaxis/(2*self.radius)]])
         self.inverse_transform_velocities = np.linalg.inv(self.transform_velocities)
@@ -53,12 +59,6 @@ class Controller:
         self.rightMotor = self.robot.getDevice('right wheel')
         self.leftMotor.setPosition(float('inf'))
         self.rightMotor.setPosition(float('inf'))
-
-    def transform_direct(rot, transl, q_in):
-        return transl + rot @ q_in
-
-    def transform_inverse(rot, transl, q_in):
-        return rot @ (q_in - transl)
 
     def transform_pos_direct(self, q_ref, q_in_matrix):
         q_in_matrix = q_in_matrix.copy()
@@ -110,10 +110,10 @@ class Controller:
         self.x_robot_goal = self.q_robot_goal[0]
         self.y_robot_goal = self.q_robot_goal[1]
         self.theta_robot_goal = self.q_robot_goal[2]
-        print("Current time: %g s" % (self.current_time))
-        print("Current state robot: x = %g m; y = %g m; theta = %g rad" % (self.x_robot, self.y_robot, self.theta_robot))
-        print("Current state robot_goal: x = %g m; y = %g m; theta = %g rad" % (self.x_robot_goal, self.y_robot_goal, self.theta_robot_goal))
-        scan = self.lidar.getRangeImage()
+        # print("Current time: %g s" % (self.current_time))
+        # print("Current state robot: x = %g m; y = %g m; theta = %g rad" % (self.x_robot, self.y_robot, self.theta_robot))
+        # print("Current state robot_goal: x = %g m; y = %g m; theta = %g rad" % (self.x_robot_goal, self.y_robot_goal, self.theta_robot_goal))
+        self.near_obstacle = self.min_distance_from_obstacle()
 
     def move_robot(self, linear_velocity, angular_velocity):
         robot_velocities = np.array([linear_velocity, angular_velocity])
@@ -129,8 +129,8 @@ class Controller:
         self.right_wheel_velocity = wheel_velocities[1]
         self.leftMotor.setVelocity(self.left_wheel_velocity)
         self.rightMotor.setVelocity(self.right_wheel_velocity)
-        print("Set robot velocities to: %g m/s linear, %g rad/s angular" %
-              (self.linear_velocity, self.angular_velocity))
+        # print("Set robot velocities to: %g m/s linear, %g rad/s angular" %
+        #       (self.linear_velocity, self.angular_velocity))
 
     def set_goal_q(self, q_goal):
         self.q_goal = q_goal
@@ -161,15 +161,31 @@ class Controller:
             return False
 
     def goal_reached_track(self):
-        if abs(self.y_robot_goal) + abs(self.theta_robot_goal) < self.tol:
+        error = abs(self.y_robot_goal) + abs(self.theta_robot_goal)
+        if error < self.tol:
             return True
         else:
             return False
 
+    def min_distance_from_obstacle(self):
+        scan = np.array(self.lidar.getRangeImage())
+        angles = np.linspace(self.range / 2, - self.range / 2, scan.shape[0])
+        index = np.argmin(scan)
+        min_angle = angles[index]
+        min_distance = scan[index]
+        return (min_angle, min_distance)
+
+    def plan_goal(self):
+        distance = self.near_obstacle[1] - self.min_dist
+        angle = self.near_obstacle[0]
+        q_wall_sensor = np.array([distance * cos(angle), distance * sin(angle), angle])
+        q_wall_robot = self.transform_pos_direct(self.q_sensor, q_wall_sensor)
+        return self.transform_pos_direct(self.q_robot, q_wall_robot)
+
 def main():
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
-    ctrl = Controller(robot, timestep / 1000, INTERAXIS, RADIUS, MAX_SPEED, Q_START, K, TOL)
+    ctrl = Controller(robot, timestep / 1000, INTERAXIS, RADIUS, MAX_SPEED, Q_START, Q_SENSOR, LIDAR_RANGE, K, DIST_FROM_WALL, TOL)
     print("Current time: %g s" % (ctrl.current_time))
     print("Current state: x = %g m; y = %g m; theta = %g rad" %
         (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
@@ -180,7 +196,21 @@ def main():
         ctrl.control_to_goal_q()
         if ctrl.goal_reached_q():
             break
+    print("Current time: %g s" % (ctrl.current_time))
+    print("Current state: x = %g m; y = %g m; theta = %g rad" %
+        (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
 
+    print("Min distance from obstacle: %g m at angle %g degrees" % (ctrl.near_obstacle[1], ctrl.near_obstacle[0] * 180 / pi))
+
+    ctrl.set_goal_q(ctrl.plan_goal())
+    while robot.step(timestep) != -1:
+        ctrl.state_update()
+        ctrl.control_to_goal_q()
+        if ctrl.goal_reached_q():
+            break
+    print("Current time: %g s" % (ctrl.current_time))
+    print("Current state: x = %g m; y = %g m; theta = %g rad" %
+        (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
     ctrl.move_robot(0.0, 0.0)
 
 if __name__ == "__main__":
