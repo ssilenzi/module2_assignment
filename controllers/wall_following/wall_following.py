@@ -149,32 +149,7 @@ class Controller:
         self.q_goal = np.array([self.x_goal, self.y_goal, self.theta_goal])
         self.start_time = self.current_time
 
-    def control_to_goal_q(self, q_goal):
-        self.set_goal_q(q_goal)
-        while self.robot.step(int(1000 * self.timestep)) != -1:
-            self.state_update()
-            linear_velocity = - self.k[0] * self.x_robot_goal
-            angular_velocity = - self.k[1] * self.y_robot_goal - self.k[2] * self.theta_robot_goal
-            self.move_robot(linear_velocity, angular_velocity)
-            if self.goal_reached_q():
-                break
-        print("Current time: %g s" % (self.current_time))
-        print("Current state: x = %g m; y = %g m; theta = %g rad" %
-            (self.x_robot, self.y_robot, self.theta_robot))
-
-    def control_to_goal_track(self, y_goal, theta_goal, linear_velocity):
-        self.set_goal_track(y_goal, theta_goal)
-        while self.robot.step(int(1000 * self.timestep)) != -1:
-            self.state_update()
-            angular_velocity = - self.k[1] * self.y_robot_goal - self.k[2] * self.theta_robot_goal
-            self.move_robot(linear_velocity, angular_velocity)
-            if self.goal_reached_track():
-                break
-        print("Current time: %g s" % (self.current_time))
-        print("Current state: x = %g m; y = %g m; theta = %g rad" %
-                (self.x_robot, self.y_robot, self.theta_robot))
-
-    def goal_reached_q(self):
+    def reached_goal_q(self):
         error = np.linalg.norm(self.q_robot_goal[:2]) + abs(self.theta_robot_goal)
         if error < self.tol or (self.current_time - self.start_time) > self.max_time:
             self.start_time = 0
@@ -186,7 +161,7 @@ class Controller:
         else:
             return False
 
-    def goal_reached_track(self):
+    def reached_goal_track(self):
         error = abs(self.y_robot_goal) + abs(self.theta_robot_goal)
         if error < self.tol or (self.current_time - self.start_time) > self.max_time:
             self.start_time = 0
@@ -212,6 +187,29 @@ class Controller:
         q_wall_sensor = np.array([distance * cos(angle), distance * sin(angle), angle])
         q_wall_robot = self.transform_pos_direct(self.q_sensor, q_wall_sensor)
         return self.transform_pos_direct(self.q_robot, q_wall_robot)
+
+    def control_to_goal_q(self, q_goal):
+        self.set_goal_q(q_goal)
+        while self.robot.step(int(1000 * self.timestep)) != -1:
+            self.state_update()
+            linear_velocity = - self.k[0] * self.x_robot_goal
+            angular_velocity = - self.k[1] * self.y_robot_goal - self.k[2] * self.theta_robot_goal
+            self.move_robot(linear_velocity, angular_velocity)
+            if self.reached_goal_q():
+                break
+        print("Current time: %g s" % (self.current_time))
+        print("Current state: x = %g m; y = %g m; theta = %g rad" %
+            (self.x_robot, self.y_robot, self.theta_robot))
+
+    def control_to_goal_track(self, y_goal, theta_goal, linear_velocity):
+        self.set_goal_track(y_goal, theta_goal)
+        while self.robot.step(int(1000 * self.timestep)) != -1:
+            self.state_update()
+            angular_velocity = - self.k[1] * self.y_robot_goal - self.k[2] * self.theta_robot_goal
+            self.move_robot(linear_velocity, angular_velocity)
+        print("Current time: %g s" % (self.current_time))
+        print("Current state: x = %g m; y = %g m; theta = %g rad" %
+                (self.x_robot, self.y_robot, self.theta_robot))
 
 def main():
     robot = Robot()

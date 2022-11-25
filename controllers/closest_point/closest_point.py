@@ -153,14 +153,14 @@ class Controller:
         angular_velocity = - self.k[1] * self.y_robot_goal - self.k[2] * self.theta_robot_goal
         self.move_robot(linear_velocity, angular_velocity)
 
-    def goal_reached_q(self):
+    def reached_goal_q(self):
         error = np.linalg.norm(self.q_robot_goal[:2]) + abs(self.theta_robot_goal)
         if error < self.tol:
             return True
         else:
             return False
 
-    def goal_reached_track(self):
+    def reached_goal_track(self):
         error = abs(self.y_robot_goal) + abs(self.theta_robot_goal)
         if error < self.tol:
             return True
@@ -194,7 +194,7 @@ def main():
     while robot.step(timestep) != -1:
         ctrl.state_update()
         ctrl.control_to_goal_q()
-        if ctrl.goal_reached_q():
+        if ctrl.reached_goal_q():
             break
     print("Current time: %g s" % (ctrl.current_time))
     print("Current state: x = %g m; y = %g m; theta = %g rad" %
@@ -206,7 +206,7 @@ def main():
     while robot.step(timestep) != -1:
         ctrl.state_update()
         ctrl.control_to_goal_q()
-        if ctrl.goal_reached_q():
+        if ctrl.reached_goal_q():
             break
     print("Current time: %g s" % (ctrl.current_time))
     print("Current state: x = %g m; y = %g m; theta = %g rad" %
