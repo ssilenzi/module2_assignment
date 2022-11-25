@@ -181,12 +181,17 @@ class Controller:
         min_distance = scan[index]
         return (min_angle, min_distance)
 
-    def plan_goal(self):
+    def plan_to_wall(self):
         distance = self.near_obstacle[1] - self.min_dist
         angle = self.near_obstacle[0]
         q_wall_sensor = np.array([distance * cos(angle), distance * sin(angle), angle])
         q_wall_robot = self.transform_pos_direct(self.q_sensor, q_wall_sensor)
-        return self.transform_pos_direct(self.q_robot, q_wall_robot)
+        q_wall = self.transform_pos_direct(self.q_robot, q_wall_robot)
+        return q_wall
+
+    def plan_along_wall(self):
+        q_wall = self.plan_to_wall()
+        return (q_wall[1], q_wall[2] - pi / 2)
 
     def control_to_goal_q(self, q_goal):
         self.set_goal_q(q_goal)
@@ -201,12 +206,17 @@ class Controller:
         print("Current state: x = %g m; y = %g m; theta = %g rad" %
             (self.x_robot, self.y_robot, self.theta_robot))
 
-    def control_to_goal_track(self, y_goal, theta_goal, linear_velocity):
-        self.set_goal_track(y_goal, theta_goal)
+    def control_to_wall(self):
+        q_goal = self.plan_to_wall()
+        self.control_to_goal_q(q_goal)
+
+    def control_along_wall(self, forward_speed):
+        q_track = self.plan_along_wall()
+        self.set_goal_track(q_track[0], q_track[1])
         while self.robot.step(int(1000 * self.timestep)) != -1:
             self.state_update()
             angular_velocity = - self.k[1] * self.y_robot_goal - self.k[2] * self.theta_robot_goal
-            self.move_robot(linear_velocity, angular_velocity)
+            self.move_robot(forward_speed, angular_velocity)
         print("Current time: %g s" % (self.current_time))
         print("Current state: x = %g m; y = %g m; theta = %g rad" %
                 (self.x_robot, self.y_robot, self.theta_robot))
@@ -220,13 +230,11 @@ def main():
         (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
 
     ctrl.control_to_goal_q(Q_INTERM)
-
     print("Min distance from obstacle: %g m at angle %g rad" % (ctrl.near_obstacle[1], ctrl.near_obstacle[0]))
 
-    q_goal = ctrl.plan_goal()
-    ctrl.control_to_goal_q(q_goal)
+    ctrl.control_to_wall()
 
-    ctrl.control_to_goal_track(q_goal[1], q_goal[2] - pi / 2, FORWARD_SPEED)
+    ctrl.control_along_wall(FORWARD_SPEED)
     
     ctrl.move_robot(0.0, 0.0)
 

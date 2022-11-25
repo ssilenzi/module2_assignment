@@ -175,7 +175,7 @@ class Controller:
         min_distance = scan[index]
         return (min_angle, min_distance)
 
-    def plan_goal(self):
+    def plan_to_wall(self):
         distance = self.near_obstacle[1] - self.min_dist
         angle = self.near_obstacle[0]
         q_wall_sensor = np.array([distance * cos(angle), distance * sin(angle), angle])
@@ -202,7 +202,7 @@ def main():
 
     print("Min distance from obstacle: %g m at angle %g rad" % (ctrl.near_obstacle[1], ctrl.near_obstacle[0]))
 
-    ctrl.set_goal_q(ctrl.plan_goal())
+    ctrl.set_goal_q(ctrl.plan_to_wall())
     while robot.step(timestep) != -1:
         ctrl.state_update()
         ctrl.control_to_goal_q()
