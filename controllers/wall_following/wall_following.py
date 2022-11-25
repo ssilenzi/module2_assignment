@@ -13,10 +13,12 @@ LIDAR_RANGE = pi
 DIST_FROM_WALL = 0.5 - Q_SENSOR[0]
 Q_INTERM = np.array([-1.0, 2.0, 0])
 K = np.array([0.25, 0.25, 0.5])
+FORWARD_SPEED = 0.2
 TOL = 0.01
+MAX_TIME = 10
 
 class Controller:
-    def __init__(self, robot, timestep, interaxis, radius, max_speed, q_start, q_sensor, range, k, min_dist, tol):
+    def __init__(self, robot, timestep, interaxis, radius, max_speed, q_start, q_sensor, range, k, min_dist, tol, max_time):
         self.robot = robot
         self.timestep = timestep
         self.interaxis = interaxis
@@ -31,6 +33,7 @@ class Controller:
         self.k = k
         self.min_dist = min_dist
         self.tol = tol
+        self.max_time = max_time
         self.lidar = robot.getDevice('Sick LMS 291')
         self.lidar.enable(60)
         self.lidar.enablePointCloud()
@@ -137,12 +140,14 @@ class Controller:
         self.x_goal = q_goal[0]
         self.y_goal = q_goal[1]
         self.theta_goal = q_goal[2]
+        self.start_time = self.current_time
     
     def set_goal_track(self, y_goal, theta_goal):
         self.x_goal = 0
         self.y_goal = y_goal
         self.theta_goal = theta_goal
         self.q_goal = np.array([self.x_goal, self.y_goal, self.theta_goal])
+        self.start_time = self.current_time
 
     def control_to_goal_q(self):
         linear_velocity = - self.k[0] * self.x_robot_goal
@@ -155,14 +160,24 @@ class Controller:
 
     def goal_reached_q(self):
         error = np.linalg.norm(self.q_robot_goal[:2]) + abs(self.theta_robot_goal)
-        if error < self.tol:
+        if error < self.tol or (self.current_time - self.start_time) > self.max_time:
+            self.start_time = 0
+            self.x_goal = 0
+            self.y_goal = 0
+            self.theta_goal = 0
+            self.q_goal = np.array([self.x_goal, self.y_goal, self.theta_goal])
             return True
         else:
             return False
 
     def goal_reached_track(self):
         error = abs(self.y_robot_goal) + abs(self.theta_robot_goal)
-        if error < self.tol:
+        if error < self.tol or (self.current_time - self.start_time) > self.max_time:
+            self.start_time = 0
+            self.x_goal = 0
+            self.y_goal = 0
+            self.theta_goal = 0
+            self.q_goal = np.array([self.x_goal, self.y_goal, self.theta_goal])
             return True
         else:
             return False
@@ -185,7 +200,7 @@ class Controller:
 def main():
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
-    ctrl = Controller(robot, timestep / 1000, INTERAXIS, RADIUS, MAX_SPEED, Q_START, Q_SENSOR, LIDAR_RANGE, K, DIST_FROM_WALL, TOL)
+    ctrl = Controller(robot, timestep / 1000, INTERAXIS, RADIUS, MAX_SPEED, Q_START, Q_SENSOR, LIDAR_RANGE, K, DIST_FROM_WALL, TOL, MAX_TIME)
     print("Current time: %g s" % (ctrl.current_time))
     print("Current state: x = %g m; y = %g m; theta = %g rad" %
         (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
@@ -202,7 +217,8 @@ def main():
 
     print("Min distance from obstacle: %g m at angle %g rad" % (ctrl.near_obstacle[1], ctrl.near_obstacle[0]))
 
-    ctrl.set_goal_q(ctrl.plan_goal())
+    q_goal = ctrl.plan_goal()
+    ctrl.set_goal_q(q_goal)
     while robot.step(timestep) != -1:
         ctrl.state_update()
         ctrl.control_to_goal_q()
@@ -211,6 +227,17 @@ def main():
     print("Current time: %g s" % (ctrl.current_time))
     print("Current state: x = %g m; y = %g m; theta = %g rad" %
         (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
+
+    ctrl.set_goal_track(q_goal[1], q_goal[2] - pi / 2)
+    while robot.step(timestep) != -1:
+        ctrl.state_update()
+        ctrl.control_to_goal_track(FORWARD_SPEED)
+        if ctrl.goal_reached_track():
+            break
+    print("Current time: %g s" % (ctrl.current_time))
+    print("Current state: x = %g m; y = %g m; theta = %g rad" %
+        (ctrl.x_robot, ctrl.y_robot, ctrl.theta_robot))
+    
     ctrl.move_robot(0.0, 0.0)
 
 if __name__ == "__main__":
